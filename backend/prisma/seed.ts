@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { stringifyJson } from "../src/utils/json";
 
 const prisma = new PrismaClient();
 
@@ -88,13 +89,25 @@ async function main() {
   const warehouse = await prisma.scenario.upsert({
     where: { key: WAREHOUSE_SCENARIO.key },
     update: {},
-    create: WAREHOUSE_SCENARIO,
+    create: {
+      ...WAREHOUSE_SCENARIO,
+      jammingProfile: stringifyJson(WAREHOUSE_SCENARIO.jammingProfile),
+      goalDefinition: stringifyJson(WAREHOUSE_SCENARIO.goalDefinition),
+      scoringWeights: stringifyJson(WAREHOUSE_SCENARIO.scoringWeights),
+      sensorSuite: stringifyJson(WAREHOUSE_SCENARIO.sensorSuite),
+    },
   });
 
   const office = await prisma.scenario.upsert({
     where: { key: OFFICE_SCENARIO.key },
     update: {},
-    create: OFFICE_SCENARIO,
+    create: {
+      ...OFFICE_SCENARIO,
+      jammingProfile: stringifyJson(OFFICE_SCENARIO.jammingProfile),
+      goalDefinition: stringifyJson(OFFICE_SCENARIO.goalDefinition),
+      scoringWeights: stringifyJson(OFFICE_SCENARIO.scoringWeights),
+      sensorSuite: stringifyJson(OFFICE_SCENARIO.sensorSuite),
+    },
   });
 
   const referenceStack = await prisma.stack.upsert({
@@ -110,14 +123,14 @@ async function main() {
       stackId: referenceStack.id,
       version: "1.0.0",
       submissionType: "PARAM_OVERRIDE",
-      paramOverrides: {
+      paramOverrides: stringifyJson({
         "Grid/RayTracing": true,
         "Vis/MaxDepth": 8.0,
         "Odom/Holonomic": false,
-      },
-      manifest: { capabilities: ["slam", "navigation", "exploration"] },
+      }),
+      manifest: stringifyJson({ capabilities: ["slam", "navigation", "exploration"] }),
       cmdVelType: "TwistStamped",
-      capabilities: ["slam", "navigation", "exploration"],
+      capabilities: stringifyJson(["slam", "navigation", "exploration"]),
       createdBy: org.users[0].id,
     },
   });
@@ -136,14 +149,13 @@ async function main() {
       version: "1.4.0",
       submissionType: "DOCKER_IMAGE",
       imageRef: "registry.acme.example/acme-nav-stack:1.4.0",
-      manifest: { stack_name: "acme-nav-stack", ros_distro: "humble", startup_timeout_s: 60 },
+      manifest: stringifyJson({ stack_name: "acme-nav-stack", ros_distro: "humble", startup_timeout_s: 60 }),
       cmdVelType: "TwistStamped",
-      capabilities: ["slam", "navigation"],
+      capabilities: stringifyJson(["slam", "navigation"]),
       createdBy: org.users[1].id,
     },
   });
 
-  // Seed a handful of historical runs + results so dashboard/leaderboard aren't empty on first login.
   const historical: Array<{
     stackVersionId: string;
     scenarioId: string;
@@ -180,16 +192,16 @@ async function main() {
         runId: run.id,
         overallScore: h.score,
         passFail: h.pass,
-        categoryScores: {
+        categoryScores: stringifyJson({
           localizationContinuity: h.score + 2,
           slamMapQuality: h.score - 3,
           gpsDenialTransition: h.score - 1,
           navigationPerformance: h.score + 1,
           explorationCompleteness: h.score - 5,
           safety: h.pass ? 100 : 80,
-        },
-        errorCodes: h.errorCodes,
-        artifactRefs: {},
+        }),
+        errorCodes: stringifyJson(h.errorCodes),
+        artifactRefs: stringifyJson({}),
       },
     });
   }

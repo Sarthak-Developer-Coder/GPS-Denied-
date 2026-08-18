@@ -11,7 +11,7 @@ export interface EngineScenario {
 }
 
 export interface EngineStackVersion {
-  submissionType: "DOCKER_IMAGE" | "BAG_TRAJECTORY" | "PARAM_OVERRIDE";
+  submissionType: string;
   paramOverrides?: Record<string, unknown> | null;
   cmdVelType: string;
 }

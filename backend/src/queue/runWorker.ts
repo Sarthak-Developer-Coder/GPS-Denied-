@@ -8,6 +8,7 @@ import { publishRunEvent } from "../websocket/pubsub";
 import { SimulationEngine, EngineScenario, EngineStackVersion, SimEvent } from "../simulation/simulationEngine";
 import { isCancelled, clearCancellation } from "./cancellationRegistry";
 import { fireRunCompletedWebhooks } from "../services/webhook.service";
+import { parseJson, stringifyJson } from "../utils/json";
 
 const ARTIFACTS_ROOT = path.join(__dirname, "..", "..", "artifacts");
 
@@ -45,17 +46,17 @@ async function processRunJob(job: Job<RunJobData>): Promise<void> {
   const engineScenario: EngineScenario = {
     key: run.scenario.key,
     durationSec: run.scenario.durationSec,
-    jammingProfile: run.scenario.jammingProfile as any,
-    goalDefinition: run.scenario.goalDefinition as any,
-    scoringWeights: run.scenario.scoringWeights as any,
+    jammingProfile: parseJson(run.scenario.jammingProfile, {} as any),
+    goalDefinition: parseJson(run.scenario.goalDefinition, {} as any),
+    scoringWeights: parseJson(run.scenario.scoringWeights, {} as any),
   };
   const engineStackVersion: EngineStackVersion = {
     submissionType: run.stackVersion.submissionType,
-    paramOverrides: run.stackVersion.paramOverrides as any,
+    paramOverrides: parseJson(run.stackVersion.paramOverrides, null),
     cmdVelType: run.stackVersion.cmdVelType,
   };
 
-  let eventBuffer: { runId: string; timestampSim: number; eventType: string; payload: any; severity: string }[] = [];
+  let eventBuffer: { runId: string; timestampSim: number; eventType: string; payload: string; severity: string }[] = [];
   const flush = async () => {
     if (eventBuffer.length === 0) return;
     const batch = eventBuffer;
@@ -73,7 +74,7 @@ async function processRunJob(job: Job<RunJobData>): Promise<void> {
         runId,
         timestampSim: evt.timestampSim,
         eventType: evt.eventType,
-        payload: evt.payload ?? {},
+        payload: stringifyJson(evt.payload ?? {}),
         severity: evt.severity,
       });
     } else {
@@ -81,7 +82,7 @@ async function processRunJob(job: Job<RunJobData>): Promise<void> {
         runId,
         timestampSim: evt.timestampSim,
         eventType: "telemetry",
-        payload: evt.payload,
+        payload: stringifyJson(evt.payload),
         severity: "info",
       });
     }
@@ -129,14 +130,14 @@ async function processRunJob(job: Job<RunJobData>): Promise<void> {
         runId,
         overallScore: result.overallScore,
         passFail: result.passFail,
-        categoryScores: result.categoryScores as any,
-        errorCodes: result.errorCodes,
-        artifactRefs: {
+        categoryScores: stringifyJson(result.categoryScores),
+        errorCodes: stringifyJson(result.errorCodes),
+        artifactRefs: stringifyJson({
           log: `/v1/runs/${runId}/artifacts/log.txt`,
           summary: `/v1/runs/${runId}/artifacts/summary.json`,
           map: `/v1/runs/${runId}/artifacts/map.json`,
           trajectory: `/v1/runs/${runId}/artifacts/trajectory.json`,
-        },
+        }),
       },
     }),
     prisma.run.update({ where: { id: runId }, data: { status: finalStatus, endedAt: new Date() } }),
@@ -164,29 +165,34 @@ async function processRunJob(job: Job<RunJobData>): Promise<void> {
 }
 
 export function startRunWorker(): Worker<RunJobData> {
-  const worker = new Worker<RunJobData>(
-    RUN_QUEUE_NAME,
-    async (job) => {
-      await processRunJob(job);
-    },
-    { connection: createRedisConnection(), concurrency: 5 }
-  );
+  try {
+    const worker = new Worker<RunJobData>(
+      RUN_QUEUE_NAME,
+      async (job) => {
+        await processRunJob(job);
+      },
+      { connection: createRedisConnection(), concurrency: 5 }
+    );
 
-  worker.on("failed", async (job, err) => {
-    console.error(`Run job ${job?.id} failed:`, err);
-    if (job?.data.runId) {
-      await prisma.run
-        .update({ where: { id: job.data.runId }, data: { status: "ERROR", endedAt: new Date() } })
-        .catch(() => undefined);
-      await publishRunEvent(job.data.runId, {
-        type: "log",
-        timestampSim: 0,
-        eventType: "infra_error",
-        severity: "critical",
-        message: `Infrastructure error: ${err.message}`,
-      }).catch(() => undefined);
-    }
-  });
+    worker.on("failed", async (job, err) => {
+      console.error(`Run job ${job?.id} failed:`, err);
+      if (job?.data.runId) {
+        await prisma.run
+          .update({ where: { id: job.data.runId }, data: { status: "ERROR", endedAt: new Date() } })
+          .catch(() => undefined);
+        await publishRunEvent(job.data.runId, {
+          type: "log",
+          timestampSim: 0,
+          eventType: "infra_error",
+          severity: "critical",
+          message: `Infrastructure error: ${err.message}`,
+        }).catch(() => undefined);
+      }
+    });
 
-  return worker;
+    return worker;
+  } catch (error) {
+    console.warn("Run worker disabled because BullMQ/Redis is unavailable:", error);
+    return null as unknown as Worker<RunJobData>;
+  }
 }

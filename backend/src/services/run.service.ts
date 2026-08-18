@@ -1,7 +1,8 @@
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
-import { runQueue } from "../queue/runQueue";
 import { requestCancellation } from "../queue/cancellationRegistry";
+import { enqueueRun } from "../queue/runQueue";
+import { parseJson } from "../utils/json";
 
 const ACTIVE_STATUSES = ["QUEUED", "PROVISIONING", "RUNNING", "SCORING"] as const;
 
@@ -50,7 +51,7 @@ export async function createRun(orgId: string, input: CreateRunInput) {
     },
   });
 
-  await runQueue.add("execute-run", { runId: run.id }, { jobId: run.id });
+  await enqueueRun(run.id);
 
   return run;
 }
@@ -90,7 +91,7 @@ export async function listRuns(orgId: string, filter: ListRunsFilter) {
     prisma.run.count({ where }),
   ]);
 
-  return { items, total, page, pageSize };
+  return { items: items.map(normalizeRun), total, page, pageSize };
 }
 
 export async function getRun(orgId: string, runId: string) {
@@ -104,22 +105,28 @@ export async function getRun(orgId: string, runId: string) {
     },
   });
   if (!run) throw ApiError.notFound("Run not found");
-  return run;
+  return normalizeRun(run);
 }
 
 export async function getRunResult(orgId: string, runId: string) {
   const run = await getRun(orgId, runId);
   const result = await prisma.runResult.findUnique({ where: { runId: run.id } });
   if (!result) throw ApiError.notFound("Run result not yet available");
-  return result;
+  return {
+    ...result,
+    categoryScores: parseJson<Record<string, number>>(result.categoryScores, {}),
+    errorCodes: parseJson<string[]>(result.errorCodes, []),
+    artifactRefs: parseJson<Record<string, string>>(result.artifactRefs, {}),
+  };
 }
 
 export async function getRunEvents(orgId: string, runId: string, afterSimTime?: number) {
   await getRun(orgId, runId);
-  return prisma.runEvent.findMany({
+  const events = await prisma.runEvent.findMany({
     where: { runId, ...(afterSimTime !== undefined ? { timestampSim: { gt: afterSimTime } } : {}) },
     orderBy: { timestampSim: "asc" },
   });
+  return events.map((event) => ({ ...event, payload: parseJson<Record<string, unknown>>(event.payload, {}) }));
 }
 
 export async function cancelRun(orgId: string, runId: string) {
@@ -168,7 +175,7 @@ export async function dashboardSummary(orgId: string) {
     avgScore: Math.round((avgScoreAgg._avg.overallScore ?? 0) * 10) / 10,
     simMinutesUsed: org.usedSimMinutes,
     simMinutesQuota: org.quotaSimMinutes,
-    recentRuns,
+    recentRuns: recentRuns.map(normalizeRun),
     scoreTrend: trend.map((r) => ({
       runId: r.id,
       date: r.createdAt,
@@ -207,4 +214,42 @@ export async function leaderboard(orgId: string, scenarioId?: string) {
       passFail: run.result!.passFail,
       date: run.createdAt,
     }));
+}
+
+function normalizeRun(run: any) {
+  return {
+    ...run,
+    scenario: {
+      ...run.scenario,
+      jammingProfile: parseJson<Record<string, unknown>>(run.scenario?.jammingProfile, {}),
+      goalDefinition: parseJson<Record<string, unknown>>(run.scenario?.goalDefinition, {}),
+      scoringWeights: parseJson<Record<string, number>>(run.scenario?.scoringWeights, {}),
+      sensorSuite: parseJson<Record<string, unknown>>(run.scenario?.sensorSuite, {}),
+    },
+    stackVersion: {
+      ...run.stackVersion,
+      capabilities: parseJson<string[]>(run.stackVersion?.capabilities, []),
+      paramOverrides: parseJson<Record<string, unknown> | null>(run.stackVersion?.paramOverrides, null),
+      manifest: parseJson<Record<string, unknown> | null>(run.stackVersion?.manifest, null),
+      runs: run.stackVersion?.runs?.map((versionRun: any) => ({
+        ...versionRun,
+        result: versionRun.result
+          ? {
+              ...versionRun.result,
+              categoryScores: parseJson<Record<string, number>>(versionRun.result.categoryScores, {}),
+              errorCodes: parseJson<string[]>(versionRun.result.errorCodes, []),
+              artifactRefs: parseJson<Record<string, string>>(versionRun.result.artifactRefs, {}),
+            }
+          : versionRun.result,
+      })),
+    },
+    result: run.result
+      ? {
+          ...run.result,
+          categoryScores: parseJson<Record<string, number>>(run.result.categoryScores, {}),
+          errorCodes: parseJson<string[]>(run.result.errorCodes, []),
+          artifactRefs: parseJson<Record<string, string>>(run.result.artifactRefs, {}),
+        }
+      : run.result,
+  };
 }

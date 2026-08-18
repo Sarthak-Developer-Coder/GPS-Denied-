@@ -3,44 +3,15 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
-}
-
-enum Role {
-  ADMIN
-  ENGINEER
-  VIEWER
-}
-
-enum PlanTier {
-  FREE
-  TEAM
-  ENTERPRISE
-}
-
-enum SubmissionType {
-  DOCKER_IMAGE
-  BAG_TRAJECTORY
-  PARAM_OVERRIDE
-}
-
-enum RunStatus {
-  QUEUED
-  PROVISIONING
-  RUNNING
-  SCORING
-  PASSED
-  FAILED
-  ERROR
-  CANCELLED
 }
 
 model Org {
   id               String   @id @default(uuid())
   name             String
   slug             String   @unique
-  planTier         PlanTier @default(FREE)
+  planTier         String   @default("FREE")
   quotaSimMinutes  Int      @default(600)
   usedSimMinutes   Int      @default(0)
   maxConcurrentRuns Int     @default(2)
@@ -60,7 +31,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String
-  role         Role     @default(ENGINEER)
+  role         String   @default("ENGINEER")
   createdAt    DateTime @default(now())
 
   runsStarted  Run[]    @relation("StartedByUser")
@@ -94,13 +65,13 @@ model StackVersion {
   stack           Stack          @relation(fields: [stackId], references: [id], onDelete: Cascade)
   stackId         String
   version         String
-  submissionType  SubmissionType
+  submissionType  String
   imageRef        String?
   bagRef          String?
-  paramOverrides  Json?
-  manifest        Json?
+  paramOverrides  String?
+  manifest        String?
   cmdVelType      String         @default("TwistStamped")
-  capabilities    String[]
+  capabilities    String
   createdBy       String?
   createdAt       DateTime       @default(now())
 
@@ -118,10 +89,10 @@ model Scenario {
   worldFile      String
   difficulty     String
   durationSec    Int
-  jammingProfile Json
-  goalDefinition Json
-  scoringWeights Json
-  sensorSuite    Json
+  jammingProfile String
+  goalDefinition String
+  scoringWeights String
+  sensorSuite    String
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
 
@@ -136,7 +107,7 @@ model Run {
   stackVersionId String
   scenario       Scenario  @relation(fields: [scenarioId], references: [id])
   scenarioId     String
-  status         RunStatus @default(QUEUED)
+  status         String    @default("QUEUED")
   seed           Int
   timeoutSec     Int       @default(900)
   liveViewEnabled Boolean  @default(true)
@@ -159,9 +130,9 @@ model RunResult {
   runId          String   @unique
   overallScore   Float
   passFail       Boolean
-  categoryScores Json
-  errorCodes     String[]
-  artifactRefs   Json
+  categoryScores String
+  errorCodes     String
+  artifactRefs   String
   createdAt      DateTime @default(now())
 }
 
@@ -172,7 +143,7 @@ model RunEvent {
   timestampSim  Float
   timestampWall DateTime @default(now())
   eventType     String
-  payload       Json
+  payload       String
   severity      String   @default("info")
 
   @@index([runId, timestampSim])
@@ -184,7 +155,7 @@ model Webhook {
   orgId     String
   url       String
   secret    String
-  events    String[]
+  events    String
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 }

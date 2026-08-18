@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { asyncHandler } from "../utils/asyncHandler";
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
+import { stringifyJson } from "../utils/json";
 
 const router = Router();
 router.use(requireAuth);
@@ -28,7 +29,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { url, events } = createSchema.parse(req.body);
     const secret = crypto.randomBytes(24).toString("hex");
-    const hook = await prisma.webhook.create({ data: { orgId: req.auth!.orgId, url, events, secret } });
+    const hook = await prisma.webhook.create({ data: { orgId: req.auth!.orgId, url, events: stringifyJson(events), secret } });
     res.status(201).json(hook);
   })
 );

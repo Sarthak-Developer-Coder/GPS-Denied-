@@ -1,9 +1,9 @@
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
-import { Prisma, SubmissionType } from "@prisma/client";
+import { parseJson, stringifyJson } from "../utils/json";
 
 export async function listStacks(orgId: string) {
-  return prisma.stack.findMany({
+  const stacks = await prisma.stack.findMany({
     where: { orgId },
     include: {
       versions: {
@@ -13,6 +13,27 @@ export async function listStacks(orgId: string) {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  return stacks.map((stack) => ({
+    ...stack,
+    versions: stack.versions.map((version) => ({
+      ...version,
+      paramOverrides: parseJson<Record<string, unknown> | null>(version.paramOverrides, null),
+      manifest: parseJson<Record<string, unknown> | null>(version.manifest, null),
+      capabilities: parseJson<string[]>(version.capabilities, []),
+      runs: version.runs.map((run) => ({
+        ...run,
+        result: run.result
+          ? {
+              ...run.result,
+              categoryScores: parseJson<Record<string, number>>(run.result.categoryScores, {}),
+              errorCodes: parseJson<string[]>(run.result.errorCodes, []),
+              artifactRefs: parseJson<Record<string, string>>(run.result.artifactRefs, {}),
+            }
+          : run.result,
+      })),
+    })),
+  }));
 }
 
 export async function getStack(orgId: string, stackId: string) {
@@ -21,7 +42,15 @@ export async function getStack(orgId: string, stackId: string) {
     include: { versions: { orderBy: { createdAt: "desc" } } },
   });
   if (!stack) throw ApiError.notFound("Stack not found");
-  return stack;
+  return {
+    ...stack,
+    versions: stack.versions.map((version) => ({
+      ...version,
+      paramOverrides: parseJson<Record<string, unknown> | null>(version.paramOverrides, null),
+      manifest: parseJson<Record<string, unknown> | null>(version.manifest, null),
+      capabilities: parseJson<string[]>(version.capabilities, []),
+    })),
+  };
 }
 
 export async function createStack(orgId: string, name: string) {
@@ -32,7 +61,7 @@ export async function createStack(orgId: string, name: string) {
 
 export interface CreateVersionInput {
   version: string;
-  submissionType: SubmissionType;
+  submissionType: string;
   imageRef?: string;
   bagRef?: string;
   paramOverrides?: Record<string, unknown>;
@@ -40,10 +69,6 @@ export interface CreateVersionInput {
   cmdVelType?: string;
   capabilities?: string[];
   createdBy?: string;
-}
-
-function toJsonValue(value?: Record<string, unknown>) {
-  return value as Prisma.InputJsonValue | undefined;
 }
 
 export async function createStackVersion(orgId: string, stackId: string, input: CreateVersionInput) {
@@ -60,10 +85,10 @@ export async function createStackVersion(orgId: string, stackId: string, input: 
       submissionType: input.submissionType,
       imageRef: input.imageRef,
       bagRef: input.bagRef,
-      paramOverrides: toJsonValue(input.paramOverrides),
-      manifest: toJsonValue(input.manifest),
+      paramOverrides: input.paramOverrides ? stringifyJson(input.paramOverrides) : null,
+      manifest: input.manifest ? stringifyJson(input.manifest) : null,
       cmdVelType: input.cmdVelType ?? "TwistStamped",
-      capabilities: input.capabilities ?? [],
+      capabilities: stringifyJson(input.capabilities ?? []),
       createdBy: input.createdBy,
     },
   });

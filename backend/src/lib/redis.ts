@@ -9,3 +9,17 @@ export function createRedisConnection() {
 }
 
 export const redis = createRedisConnection();
+
+export async function isBullmqCompatibleRedis(): Promise<boolean> {
+  try {
+    const probe = new IORedis(env.redisUrl);
+    const info = await probe.info("server");
+    await probe.quit();
+    const match = info.match(/redis_version:(\d+)\.(\d+)\.(\d+)/i);
+    if (!match) return false;
+    const major = Number(match[1]);
+    return major >= 5;
+  } catch {
+    return false;
+  }
+}
