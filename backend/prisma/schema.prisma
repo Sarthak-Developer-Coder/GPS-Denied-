@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  ENGINEER
+  VIEWER
+}
+
+enum PlanTier {
+  FREE
+  TEAM
+  ENTERPRISE
+}
+
+enum SubmissionType {
+  DOCKER_IMAGE
+  BAG_TRAJECTORY
+  PARAM_OVERRIDE
+}
+
+enum RunStatus {
+  QUEUED
+  PROVISIONING
+  RUNNING
+  SCORING
+  PASSED
+  FAILED
+  ERROR
+  CANCELLED
+}
+
+model Org {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  planTier         PlanTier @default(FREE)
+  quotaSimMinutes  Int      @default(600)
+  usedSimMinutes   Int      @default(0)
+  maxConcurrentRuns Int     @default(2)
+  createdAt        DateTime @default(now())
+
+  users     User[]
+  stacks    Stack[]
+  runs      Run[]
+  webhooks  Webhook[]
+  apiKeys   ApiKey[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  org          Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId        String
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(ENGINEER)
+  createdAt    DateTime @default(now())
+
+  runsStarted  Run[]    @relation("StartedByUser")
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId     String
+  label     String
+  keyPrefix String
+  keyHash   String
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+}
+
+model Stack {
+  id        String   @id @default(uuid())
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId     String
+  name      String
+  createdAt DateTime @default(now())
+
+  versions  StackVersion[]
+
+  @@unique([orgId, name])
+}
+
+model StackVersion {
+  id              String         @id @default(uuid())
+  stack           Stack          @relation(fields: [stackId], references: [id], onDelete: Cascade)
+  stackId         String
+  version         String
+  submissionType  SubmissionType
+  imageRef        String?
+  bagRef          String?
+  paramOverrides  Json?
+  manifest        Json?
+  cmdVelType      String         @default("TwistStamped")
+  capabilities    String[]
+  createdBy       String?
+  createdAt       DateTime       @default(now())
+
+  runs            Run[]
+
+  @@unique([stackId, version])
+}
+
+model Scenario {
+  id             String   @id @default(uuid())
+  key            String   @unique
+  name           String
+  version        String
+  description    String
+  worldFile      String
+  difficulty     String
+  durationSec    Int
+  jammingProfile Json
+  goalDefinition Json
+  scoringWeights Json
+  sensorSuite    Json
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  runs           Run[]
+}
+
+model Run {
+  id             String    @id @default(uuid())
+  org            Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId          String
+  stackVersion   StackVersion @relation(fields: [stackVersionId], references: [id])
+  stackVersionId String
+  scenario       Scenario  @relation(fields: [scenarioId], references: [id])
+  scenarioId     String
+  status         RunStatus @default(QUEUED)
+  seed           Int
+  timeoutSec     Int       @default(900)
+  liveViewEnabled Boolean  @default(true)
+  queuePosition  Int?
+  startedByUser  User?     @relation("StartedByUser", fields: [startedById], references: [id])
+  startedById    String?
+  workerPodId    String?
+  queuedAt       DateTime  @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime  @default(now())
+
+  events         RunEvent[]
+  result         RunResult?
+}
+
+model RunResult {
+  id             String   @id @default(uuid())
+  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId          String   @unique
+  overallScore   Float
+  passFail       Boolean
+  categoryScores Json
+  errorCodes     String[]
+  artifactRefs   Json
+  createdAt      DateTime @default(now())
+}
+
+model RunEvent {
+  id            String   @id @default(uuid())
+  run           Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId         String
+  timestampSim  Float
+  timestampWall DateTime @default(now())
+  eventType     String
+  payload       Json
+  severity      String   @default("info")
+
+  @@index([runId, timestampSim])
+}
+
+model Webhook {
+  id        String   @id @default(uuid())
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId     String
+  url       String
+  secret    String
+  events    String[]
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
