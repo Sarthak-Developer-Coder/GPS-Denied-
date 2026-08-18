@@ -22,6 +22,15 @@ export function NewRunPage() {
   const [timeoutSec, setTimeoutSec] = useState(900);
   const [liveViewEnabled, setLiveViewEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [stackName, setStackName] = useState("");
+  const [versionName, setVersionName] = useState("1.0.0");
+  const [imageRef, setImageRef] = useState("");
+  const [bagRef, setBagRef] = useState("");
+  const [manifestText, setManifestText] = useState('{\n  "stack_name": "",\n  "ros_distro": "humble",\n  "startup_timeout_s": 60\n}');
+  const [paramText, setParamText] = useState('{\n  "Grid/RayTracing": true,\n  "Vis/MaxDepth": 8.0\n}');
+  const [capabilitiesText, setCapabilitiesText] = useState("slam, navigation");
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const selectedVersion = useMemo(
     () => stacks.flatMap((stack) => stack.versions.map((version) => ({ stack, version }))).find((item) => item.version.id === selectedStackVersionId),
@@ -42,6 +51,55 @@ export function NewRunPage() {
       navigate(`/runs/${res.data.id}`);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function registerStackVersion() {
+    if (!stackName.trim() || !versionName.trim()) {
+      setUploadStatus("Provide a stack name and version before uploading.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadStatus(null);
+
+    try {
+      let stack = stacks.find((item) => item.name.toLowerCase() === stackName.trim().toLowerCase());
+      if (!stack) {
+        const createdStack = await api.post("/stacks", { name: stackName.trim() });
+        stack = { ...createdStack.data, versions: [] };
+      }
+      if (!stack) {
+        throw new Error("Unable to resolve stack after creation");
+      }
+
+      const submissionType = tab;
+      const parsedManifest = manifestText.trim() ? JSON.parse(manifestText) : null;
+      const parsedParams = paramText.trim() ? JSON.parse(paramText) : null;
+      const capabilities = capabilitiesText
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean) as Array<"slam" | "navigation" | "exploration">;
+
+      const version = await api.post(`/stacks/${stack.id}/versions`, {
+        version: versionName.trim(),
+        submissionType,
+        imageRef: imageRef.trim() || undefined,
+        bagRef: bagRef.trim() || undefined,
+        paramOverrides: submissionType === "PARAM_OVERRIDE" ? parsedParams ?? undefined : undefined,
+        manifest: parsedManifest ?? undefined,
+        cmdVelType: submissionType === "DOCKER_IMAGE" ? "TwistStamped" : "TwistStamped",
+        capabilities: capabilities.length > 0 ? capabilities : ["slam", "navigation"],
+      });
+
+      const refreshed = await api.get("/stacks");
+      useAppStore.getState().setStacks(refreshed.data);
+      setSelectedStackVersionId(version.data.id);
+      setUploadStatus(`Uploaded ${stackName.trim()} v${version.data.version} and selected it for the run.`);
+    } catch (error: any) {
+      setUploadStatus(error.response?.data?.error?.message ?? error.message ?? "Upload failed");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -73,6 +131,54 @@ export function NewRunPage() {
         <Card className="rounded-[28px] p-6">
           {step === 0 ? (
             <div className="space-y-6">
+              <div className="rounded-3xl border border-accent-400/20 bg-accent-400/10 p-5">
+                <div className="text-xs uppercase tracking-[0.3em] text-accent-400/80">Upload / Register</div>
+                <div className="mt-2 text-lg font-semibold text-white">Add a new stack version</div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  This is the actual upload entry point: create a stack, attach a version, and select it for the run.
+                </p>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-300">Stack name</div>
+                    <input value={stackName} onChange={(e) => setStackName(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 text-white" placeholder="Acme Nav Stack" />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-300">Version</div>
+                    <input value={versionName} onChange={(e) => setVersionName(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 text-white" placeholder="1.0.0" />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-300">Docker image / registry ref</div>
+                    <input value={imageRef} onChange={(e) => setImageRef(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 text-white" placeholder="registry.example.com/team/stack:tag" />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-300">Bag / trajectory ref</div>
+                    <input value={bagRef} onChange={(e) => setBagRef(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 text-white" placeholder="s3://bucket/run.mcap" />
+                  </label>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <label className="block md:col-span-2">
+                    <div className="mb-2 text-sm text-slate-300">Manifest JSON</div>
+                    <textarea value={manifestText} onChange={(e) => setManifestText(e.target.value)} rows={6} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 font-mono text-xs text-white" />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-300">Capabilities</div>
+                    <input value={capabilitiesText} onChange={(e) => setCapabilitiesText(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 text-white" placeholder="slam, navigation" />
+                    <div className="mt-4 text-sm text-slate-400">Param overrides JSON</div>
+                    <textarea value={paramText} onChange={(e) => setParamText(e.target.value)} rows={6} className="mt-2 w-full rounded-2xl border border-white/10 bg-space-900 px-4 py-3 font-mono text-xs text-white" />
+                  </label>
+                </div>
+
+                {uploadStatus ? <div className="mt-4 rounded-2xl border border-white/10 bg-space-900/80 p-3 text-sm text-slate-200">{uploadStatus}</div> : null}
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <Button variant="secondary" onClick={registerStackVersion} disabled={uploading}>
+                    {uploading ? "Uploading..." : "Upload / Register Stack"}
+                  </Button>
+                </div>
+              </div>
+
               <div className="flex flex-wrap gap-3">
                 {(["DOCKER_IMAGE", "BAG_TRAJECTORY", "PARAM_OVERRIDE"] as const).map((value) => (
                   <button
